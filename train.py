@@ -4,77 +4,80 @@ from sklearn.metrics.pairwise import cosine_similarity
 import sys
 
 def train_and_recommend():
-    # Load the dataset
+    # Load dataset
     try:
-        df = pd.read_csv('multilingual_song_dataset_220.csv')
+        df = pd.read_csv("multilingual_song_dataset_220.csv")
     except FileNotFoundError:
-        print("Error: Dataset file 'multilingual_song_dataset_220.csv' not found.")
+        print("❌ Dataset file not found.")
         return
 
-    # Data Preprocessing
-    # Handle missing values if any (replace NaN with empty string)
-    df['mood'] = df['mood'].fillna('')
-    df['genre'] = df['genre'].fillna('')
-    df['lyrics'] = df['lyrics'].fillna('')
+    # Fill missing values
+    for col in ['song_name', 'artist', 'mood', 'genre', 'lyrics', 'language']:
+        df[col] = df[col].fillna('')
 
-    # Create a combined feature column for content-based filtering
-    # We give more weight to 'mood' (repeating 3 times) so it dominates recommendations
-    df['combined_features'] = (df['mood'] + " ")*3 + df['genre'] + " " + df['lyrics']
+    # Combine features (song name + artist + boosted mood + genre + lyrics)
+    df['combined_features'] = (
+        df['song_name'] + " " +
+        df['artist'] + " " +
+        (df['mood'] + " ") * 3 +
+        df['genre'] + " " +
+        df['lyrics']
+    )
 
-    # Initialize TF-IDF Vectorizer
+    # Vectorize
     tfidf = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = tfidf.fit_transform(df['combined_features'])
 
-    # Fit and transform the data
-    try:
-        tfidf_matrix = tfidf.fit_transform(df['combined_features'])
-    except ValueError as e:
-        print(f"Error during vectorization: {e}")
-        return
-
-    print("Model trained successfully! (Type 'quit' to exit)")
+    print("✅ Model trained successfully!")
+    print("🔎 Search by song name, mood, or feeling (type 'quit' or 'exit' to close)")
 
     def recommend_songs(query, num_recommendations=5):
-        # Vectorize the user query
+        query_lower = query.lower()
+
+        # 1️⃣ Exact / partial song name matches (FIRST)
+        name_matches = df[
+            df['song_name'].str.lower().str.contains(query_lower)
+        ][['song_name', 'artist']]
+
+        # 2️⃣ ML similarity recommendations
         query_vec = tfidf.transform([query])
+        similarity_scores = cosine_similarity(query_vec, tfidf_matrix).flatten()
 
-        # Calculate cosine similarity between query and all songs
-        similarity_scores = cosine_similarity(query_vec, tfidf_matrix)
+        sorted_indices = similarity_scores.argsort()[::-1]
+        ml_recommendations = df.iloc[sorted_indices][['song_name', 'artist']]
 
-        # Get the indices of the most similar songs (flatten to 1D array)
-        similarity_scores = similarity_scores.flatten()
+        # 3️⃣ Combine and remove duplicates
+        final_results = pd.concat(
+            [name_matches, ml_recommendations]
+        ).drop_duplicates().head(num_recommendations)
 
-        # Sort indices by score in descending order and get top N
-        top_indices = similarity_scores.argsort()[::-1][:num_recommendations]
+        return final_results
 
-        # Fetch the details
-        recommendations = df.iloc[top_indices][['song_name', 'artist', 'mood', 'genre', 'language']]
-        
-        return recommendations
-
-    # Run one test immediately to verify it works without interaction if needed, 
-    # but the user asked for a loop presumably. 
-    # Let's stick to the interactive loop as requested.
+    # Terminal interaction
     while True:
         try:
-            if len(sys.argv) > 1: # If arguments provided, use them and exit
+            if len(sys.argv) > 1:
                 user_query = " ".join(sys.argv[1:])
-                print(f"\nQuery from args: {user_query}")
                 results = recommend_songs(user_query)
+                print("\n🎵 Recommended Songs:")
                 print(results.to_string(index=False))
                 break
-                
-            user_query = input("\nEnter a mood or description (or 'quit' to exit): ")
-            if user_query.lower() == 'quit':
+
+            user_query = input("\nEnter song name or mood: ")
+            if user_query.lower() in ['quit', 'exit']:
+                print("👋 Exiting the system. Goodbye!")
                 break
-            
+
             results = recommend_songs(user_query)
-            
-            print(f"\nTop recommendations for '{user_query}':")
+
+            print("\n🎵 Recommended Songs:")
             if results.empty:
                 print("No recommendations found.")
             else:
                 print(results.to_string(index=False))
+
         except (KeyboardInterrupt, EOFError):
+            print("\n👋 Exiting the system. Goodbye!")
             break
 
 if __name__ == "__main__":
